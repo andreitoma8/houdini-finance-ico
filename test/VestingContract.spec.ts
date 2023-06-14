@@ -10,7 +10,7 @@ chai.use(chaiAsPromised);
 enum DurationUnits {
     Days,
     Weeks,
-    Months
+    Months,
 }
 
 describe("VestingContract", () => {
@@ -56,20 +56,22 @@ describe("VestingContract", () => {
     describe("createVestingSchedule", () => {
         it("should rever if beneficiary is zero address", async () => {
             await expect(
-                vesting.createVestingSchedule(ethers.constants.AddressZero, startTime, duration, DurationUnits.Months, amountToLock),
+                vesting.createVestingSchedule(ethers.constants.AddressZero, startTime, duration, DurationUnits.Months, amountToLock)
             ).to.be.revertedWith("VestingContract: beneficiary is the zero address");
         });
 
         it("should revert if amount is zero", async () => {
             await expect(vesting.createVestingSchedule(teamWallet.address, startTime, duration, DurationUnits.Months, 0)).to.be.revertedWith(
-                "VestingContract: amount is 0",
+                "VestingContract: amount is 0"
             );
         });
 
         it("should transfer tokens to vesting contract", async () => {
-            expect(
-                await vesting.createVestingSchedule(teamWallet.address, startTime, duration, DurationUnits.Months, amountToLock),
-            ).to.changeTokenBalance(token, vesting, amountToLock);
+            expect(await vesting.createVestingSchedule(teamWallet.address, startTime, duration, DurationUnits.Months, amountToLock)).to.changeTokenBalance(
+                token,
+                vesting,
+                amountToLock
+            );
         });
 
         it("should create vesting schedule", async () => {
@@ -82,6 +84,31 @@ describe("VestingContract", () => {
             expect(vestingSchedule.duration).to.equal(duration);
             expect(vestingSchedule.amountTotal).to.equal(amountToLock);
             expect(vestingSchedule.released).to.equal(0);
+        });
+    });
+
+    describe("batchCreateVestingSchedule", () => {
+        it("should revert if array of beneficiaries is empty", async () => {
+            await expect(vesting.batchCreateVestingSchedule([], startTime, duration, DurationUnits.Months, amountToLock)).to.be.revertedWith(
+                "VestingContract: no beneficiaries provided"
+            );
+        });
+
+        it("should correctly create multiple vesting schedules", async () => {
+            const beneficiaries = [teamWallet.address, deployer.address];
+            const amount = amountToLock.div(2);
+
+            await vesting.batchCreateVestingSchedule(beneficiaries, startTime, duration, DurationUnits.Months, amount);
+
+            for (let i = 0; i < beneficiaries.length; i++) {
+                const vestingSchedule = await vesting.vestingSchedules(beneficiaries[i], 0);
+
+                expect(vestingSchedule.beneficiary).to.equal(beneficiaries[i]);
+                expect(vestingSchedule.start).to.equal(startTime);
+                expect(vestingSchedule.duration).to.equal(duration);
+                expect(vestingSchedule.amountTotal).to.equal(amount);
+                expect(vestingSchedule.released).to.equal(0);
+            }
         });
     });
 
@@ -155,9 +182,7 @@ describe("VestingContract", () => {
 
             await increaseTime(60 * 60 * 24 * 30);
 
-            const releasableAmountBefore = await vesting.releasableAmount(
-                await vesting.vestingSchedules(teamWallet.address, 0),
-            );
+            const releasableAmountBefore = await vesting.releasableAmount(await vesting.vestingSchedules(teamWallet.address, 0));
 
             await vesting.release(teamWallet.address);
 
@@ -173,9 +198,7 @@ describe("VestingContract", () => {
 
     describe("release", () => {
         it("should rever it beneficiary has no vesting schedules", async () => {
-            await expect(vesting.release(teamWallet.address)).to.be.revertedWith(
-                "VestingContract: no vesting schedules for beneficiary",
-            );
+            await expect(vesting.release(teamWallet.address)).to.be.revertedWith("VestingContract: no vesting schedules for beneficiary");
         });
 
         it("should not send tokens if there are no tokens to release", async () => {
@@ -183,7 +206,7 @@ describe("VestingContract", () => {
 
             const balanceBefore = await token.balanceOf(teamWallet.address);
 
-            await vesting.release(teamWallet.address)
+            await vesting.release(teamWallet.address);
 
             const balanceAfter = await token.balanceOf(teamWallet.address);
 
@@ -198,6 +221,29 @@ describe("VestingContract", () => {
             const releasableAmount = await vesting.releasableAmount(await vesting.vestingSchedules(teamWallet.address, 0));
 
             await expect(vesting.release(teamWallet.address)).to.changeTokenBalance(token, teamWallet, releasableAmount);
+        });
+    });
+
+    describe("batchRelease", () => {
+        it("should rever if beneficiaries array is empty", async () => {
+            await expect(vesting.batchRelease([])).to.be.revertedWith("VestingContract: no beneficiaries provided");
+        });
+
+        it("should correctly release tokens to multiple beneficiaries", async () => {
+            const beneficiaries = [teamWallet.address, deployer.address];
+
+            const amount = amountToLock.div(2);
+
+            await vesting.createVestingSchedule(beneficiaries[0], startTime, duration, DurationUnits.Months, amount);
+            await vesting.createVestingSchedule(beneficiaries[1], startTime, duration, DurationUnits.Months, amount);
+
+            await increaseTime(60 * 60 * 24 * 30 + 61);
+
+            const releasableAmount = await vesting.releasableAmount(await vesting.vestingSchedules(beneficiaries[0], 0));
+
+            await expect(vesting.batchRelease(beneficiaries))
+                .to.changeTokenBalance(token, teamWallet, releasableAmount)
+                .to.changeTokenBalance(token, deployer, releasableAmount);
         });
     });
 
